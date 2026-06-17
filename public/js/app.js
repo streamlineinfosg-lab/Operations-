@@ -21,6 +21,13 @@ const TAB_LABELS = {
     accounting: 'Accounting', admin: 'Admin',
 };
 
+const NAV_GROUPS = [
+    { label: 'Workspace', tabs: ['dashboard', 'clients', 'calendar', 'tasks'] },
+    { label: 'Sales', tabs: ['accounting'] },
+    { label: 'Delivery', tabs: ['deliverables', 'library', 'studio'] },
+    { label: 'Admin', tabs: ['admin'] },
+];
+
 function qs(sel, root = document) { return root.querySelector(sel); }
 function qsa(sel, root = document) { return Array.from(root.querySelectorAll(sel)); }
 function escapeHtml(value) {
@@ -187,6 +194,7 @@ async function enterApp() {
     switchScreen(null);
     qs('#app-layout').classList.add('active');
     qs('#nav-user').textContent = state.currentUser.name;
+    qs('#nav-footer-avatar').textContent = state.currentUser.name.slice(0, 1).toUpperCase();
     paintNav();
     await loadAll();
     const firstTab = state.currentUser.tabs[0] || 'dashboard';
@@ -195,9 +203,19 @@ async function enterApp() {
 
 function paintNav() {
     const root = qs('#nav-items');
-    root.innerHTML = state.currentUser.tabs.map(tab => `
-        <button class="nav-item" data-tab="${tab}" type="button">${TAB_LABELS[tab] || tab}</button>
-    `).join('');
+    const allowed = new Set(state.currentUser.tabs);
+    root.innerHTML = NAV_GROUPS.map(group => {
+        const tabs = group.tabs.filter(t => allowed.has(t));
+        if (!tabs.length) return '';
+        return `
+            <div class="nav-group">
+                <div class="nav-group-label">${escapeHtml(group.label)}</div>
+                ${tabs.map(tab => `
+                    <button class="nav-item" data-tab="${tab}" type="button">${TAB_LABELS[tab] || tab}</button>
+                `).join('')}
+            </div>
+        `;
+    }).join('');
     qsa('[data-tab]', root).forEach(btn => btn.addEventListener('click', () => goToTab(btn.dataset.tab)));
 }
 
