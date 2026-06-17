@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Operations</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div id="app-layout">
+        <nav id="nav-rail">
+            <div class="nav-brand">
+                <strong>Operations</strong>
+            </div>
+            <div class="nav-items">
+                <button class="nav-item active" type="button" data-nav="overview">Overview</button>
+                <button class="nav-item" type="button" data-nav="clients">Clients</button>
+                <button class="nav-item" type="button" data-nav="calendar">Calendar</button>
+                <button class="nav-item" type="button" data-nav="tasks">Task</button>
+            </div>
+        </nav>
+
+        <main id="main-content">
+            <section id="screen-overview" class="screen active"></section>
+            <section id="screen-clients" class="screen"></section>
+            <section id="screen-calendar" class="screen"></section>
+            <section id="screen-tasks" class="screen"></section>
+        </main>
+    </div>
+
+    <div id="toast-container"></div>
+
+    <script src="js/app.js"></script>
+</body>
+</html>
