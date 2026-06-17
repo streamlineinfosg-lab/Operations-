@@ -1,7 +1,24 @@
 const state = {
+    currentUser: null,
+    pendingUser: null,
+    pinDigits: '',
+    pinMode: 'login', // 'login' | 'change'
+    users: [],
     clients: [],
     tasks: [],
+    deliverables: [],
+    events: [],
     calendarMonth: new Date(),
+    studioMetric: 'leads',
+    deliverableFilter: 'all',
+    taskFilter: 'all',
+    clientFilter: 'all',
+};
+
+const TAB_LABELS = {
+    dashboard: 'Dashboard', clients: 'Clients', calendar: 'Calendar', tasks: 'Tasks',
+    deliverables: 'Deliverables', library: 'Library', studio: 'Studio',
+    accounting: 'Accounting', admin: 'Admin',
 };
 
 function qs(sel, root = document) { return root.querySelector(sel); }
@@ -11,6 +28,7 @@ function escapeHtml(value) {
     div.textContent = value == null ? '' : String(value);
     return div.innerHTML;
 }
+function money(value) { return '$' + Math.round(Number(value) || 0).toLocaleString(); }
 
 function showToast(message) {
     const container = qs('#toast-container');
@@ -21,11 +39,17 @@ function showToast(message) {
     setTimeout(() => toast.remove(), 2400);
 }
 
+function showModal(content) {
+    const container = qs('#modal-container');
+    container.innerHTML = `<div class="modal-backdrop"><div class="modal-content">${content}</div></div>`;
+    const backdrop = qs('.modal-backdrop', container);
+    backdrop.addEventListener('click', e => { if (e.target === backdrop) closeModal(); });
+    qsa('[data-modal-close]', container).forEach(el => el.addEventListener('click', closeModal));
+}
+function closeModal() { qs('#modal-container').innerHTML = ''; }
+
 async function api(path, options = {}) {
-    const res = await fetch(path, {
-        headers: { 'Content-Type': 'application/json' },
-        ...options,
-    });
+    const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...options });
     if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error || 'Request failed');
@@ -34,231 +58,596 @@ async function api(path, options = {}) {
     return res.json();
 }
 
-async function loadAll() {
-    state.clients = await api('/api/clients');
-    state.tasks = await api('/api/tasks');
-}
+function clientById(id) { return state.clients.find(c => c.id === id); }
 
-function clientName(id) {
-    const client = state.clients.find(c => c.id === id);
-    return client ? client.name : 'Unassigned';
-}
+// ---- Check-in / PIN / Login ----
 
-// ---- Navigation ----
+async function initCheckin() {
+    const hour = new Date().getHours();
+    const greeting = hour < 5 ? 'Late evening' : hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : hour < 21 ? 'Good evening' : 'Late evening';
+    qs('#checkin-greeting').textContent = greeting;
 
-function initNavigation() {
-    qsa('[data-nav]').forEach(button => {
-        button.addEventListener('click', () => {
-            const target = button.dataset.nav;
-            qsa('[data-nav]').forEach(b => b.classList.toggle('active', b === button));
-            qsa('.screen').forEach(s => s.classList.toggle('active', s.id === 'screen-' + target));
-            renderScreen(target);
-        });
+    state.users = await api('/api/users');
+    const groups = { admin: 'Admin', sales: 'Sales', delivery: 'Delivery' };
+    const root = qs('#checkin-groups');
+    root.innerHTML = Object.entries(groups).map(([key, label]) => {
+        const members = state.users.filter(u => u.role === key);
+        if (!members.length) return '';
+        return `
+            <div>
+                <div class="checkin-group-label">${label} - ${members.length}</div>
+                <div class="checkin-avatars">
+                    ${members.map(u => `
+                        <button class="avatar-btn" data-user-id="${u.id}" type="button">
+                            <span class="avatar-circle">${escapeHtml(u.name.slice(0, 2).toUpperCase())}</span>
+                            <span>${escapeHtml(u.name)}</span>
+                        </button>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    qsa('[data-user-id]', root).forEach(btn => {
+        btn.addEventListener('click', () => openPinScreen(Number(btn.dataset.userId), 'login'));
     });
 }
 
-function renderScreen(name) {
-    if (name === 'overview') renderOverview();
-    if (name === 'clients') renderClients();
-    if (name === 'calendar') renderCalendar();
-    if (name === 'tasks') renderTasks();
+function openPinScreen(userId, mode) {
+    const user = state.users.find(u => u.id === userId) || state.currentUser;
+    state.pendingUser = user;
+    state.pinMode = mode;
+    state.pinDigits = '';
+    qs('#pin-name').textContent = user.name;
+    qs('#pin-title').textContent = mode === 'change' ? 'Enter current PIN' : (user.title || '');
+    qs('#pin-error').textContent = '';
+    paintPinDots();
+    paintPinPad();
+    switchScreen('screen-pin');
 }
 
-// ---- Overview ----
+function paintPinDots() {
+    qsa('#pin-dots span').forEach((dot, i) => dot.classList.toggle('filled', i < state.pinDigits.length));
+}
 
-async function renderOverview() {
-    const root = qs('#screen-overview');
-    const overview = await api('/api/overview');
+function paintPinPad() {
+    const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '<', '0', 'OK'];
+    qs('#pin-pad').innerHTML = keys.map(k => `<button class="pin-key" data-key="${k}" type="button">${k}</button>`).join('');
+    qsa('.pin-key', qs('#pin-pad')).forEach(btn => btn.addEventListener('click', () => handlePinKey(btn.dataset.key)));
+}
+
+function handlePinKey(key) {
+    if (key === '<') {
+        state.pinDigits = state.pinDigits.slice(0, -1);
+        paintPinDots();
+        return;
+    }
+    if (key === 'OK') {
+        if (state.pinDigits.length === 4) submitPin();
+        return;
+    }
+    if (state.pinDigits.length < 4) {
+        state.pinDigits += key;
+        paintPinDots();
+        if (state.pinDigits.length === 4) submitPin();
+    }
+}
+
+async function submitPin() {
+    const pin = state.pinDigits;
+    try {
+        if (state.pinMode === 'login') {
+            const user = await api('/api/login', { method: 'POST', body: JSON.stringify({ userId: state.pendingUser.id, pin }) });
+            state.currentUser = user;
+            await enterApp();
+        } else if (state.pinMode === 'change-current') {
+            state.changeCurrentPin = pin;
+            state.pinMode = 'change-new';
+            state.pinDigits = '';
+            qs('#pin-title').textContent = 'Enter new 4-digit PIN';
+            paintPinDots();
+        } else if (state.pinMode === 'change-new') {
+            await api(`/api/users/${state.currentUser.id}/pin`, {
+                method: 'POST',
+                body: JSON.stringify({ currentPin: state.changeCurrentPin, newPin: pin }),
+            });
+            showToast('PIN updated');
+            switchScreen(null);
+            qs('#app-layout').classList.add('active');
+        }
+    } catch (err) {
+        qs('#pin-error').textContent = err.message;
+        state.pinDigits = '';
+        paintPinDots();
+    }
+}
+
+qs('#pin-back').addEventListener('click', () => {
+    if (state.currentUser) {
+        switchScreen(null);
+        qs('#app-layout').classList.add('active');
+    } else {
+        switchScreen('screen-checkin');
+    }
+});
+
+function switchScreen(id) {
+    qsa('.screen').forEach(s => s.classList.remove('active'));
+    qs('#app-layout').classList.remove('active');
+    if (id) qs('#' + id).classList.add('active');
+}
+
+async function enterApp() {
+    switchScreen(null);
+    qs('#app-layout').classList.add('active');
+    qs('#nav-user').textContent = state.currentUser.name;
+    paintNav();
+    await loadAll();
+    const firstTab = state.currentUser.tabs[0] || 'dashboard';
+    goToTab(firstTab);
+}
+
+function paintNav() {
+    const root = qs('#nav-items');
+    root.innerHTML = state.currentUser.tabs.map(tab => `
+        <button class="nav-item" data-tab="${tab}" type="button">${TAB_LABELS[tab] || tab}</button>
+    `).join('');
+    qsa('[data-tab]', root).forEach(btn => btn.addEventListener('click', () => goToTab(btn.dataset.tab)));
+}
+
+function goToTab(tab) {
+    qsa('#nav-items .nav-item').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    qsa('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + tab));
+    const renderers = {
+        dashboard: renderDashboard, clients: renderClients, calendar: renderCalendar,
+        tasks: renderTasks, deliverables: renderDeliverables, library: renderLibrary,
+        studio: renderStudio, accounting: renderAccounting, admin: renderAdmin,
+    };
+    (renderers[tab] || (() => {}))();
+}
+
+qs('#logout-btn').addEventListener('click', () => {
+    state.currentUser = null;
+    switchScreen('screen-checkin');
+    initCheckin();
+});
+
+qs('#change-pin-btn').addEventListener('click', () => {
+    openPinScreen(state.currentUser.id, 'change-current');
+});
+
+async function loadAll() {
+    [state.clients, state.tasks, state.deliverables, state.events] = await Promise.all([
+        api('/api/clients'), api('/api/tasks'), api('/api/deliverables'), api('/api/calendar-events'),
+    ]);
+}
+
+// ---- Dashboard ----
+
+async function renderDashboard() {
+    const root = qs('#page-dashboard');
+    const d = await api('/api/dashboard');
     root.innerHTML = `
-        <div class="section-header">
-            <h1>Overview</h1>
-            <p>Snapshot of clients and tasks across the team</p>
+        <div class="page-header">
+            <div><h1 class="serif">Dashboard</h1><p>Aggregate view across all clients</p></div>
         </div>
-        <div class="grid grid-3">
-            <div class="card stat-card"><span>Clients</span><strong>${overview.clientCount}</strong></div>
-            <div class="card stat-card"><span>Open tasks</span><strong>${overview.openTasks}</strong></div>
-            <div class="card stat-card"><span>Completed tasks</span><strong>${overview.doneTasks}</strong></div>
-        </div>
-        <div class="card" style="margin-top:20px">
-            <h3>Due soon</h3>
-            <div class="list">
-                ${overview.dueSoon.length ? overview.dueSoon.map(t => `
-                    <div class="list-row">
-                        <div class="list-row-main">
-                            <div>
-                                <div class="list-row-title">${escapeHtml(t.title)}</div>
-                                <div class="list-row-meta">${escapeHtml(t.client_name || 'Unassigned')} - due ${escapeHtml(t.due_date)}</div>
-                            </div>
-                        </div>
-                    </div>
-                `).join('') : '<div class="empty-state">No upcoming due dates</div>'}
-            </div>
+        <div class="grid grid-4">
+            <div class="card stat-card"><span>Active Clients</span><strong>${d.activeClients}</strong></div>
+            <div class="card stat-card"><span>Posts This Week</span><strong>${d.postsThisWeek.actual}/${d.postsThisWeek.target}</strong></div>
+            <div class="card stat-card"><span>Shoots This Month</span><strong>${d.shootsThisMonth}</strong></div>
+            <div class="card stat-card"><span>Critical Clients</span><strong style="color:var(--accent)">${d.criticalClients}</strong></div>
         </div>
     `;
 }
 
 // ---- Clients ----
 
+function healthClass(score) { return score <= 30 ? 'is-critical' : ''; }
+
 function renderClients() {
-    const root = qs('#screen-clients');
+    const root = qs('#page-clients');
     root.innerHTML = `
-        <div class="section-header">
-            <h1>Clients</h1>
-            <p>Manage the client roster</p>
+        <div class="page-header">
+            <div><h1 class="serif">All Clients</h1><p>${state.clients.length} total</p></div>
+            <button class="btn btn-primary" id="add-client-btn" type="button">+ Request new client</button>
         </div>
-        <div class="list" id="clients-list"></div>
-        <div class="inline-form">
-            <input type="text" id="new-client-name" placeholder="New client name">
-            <button class="btn btn-primary" id="add-client-btn" type="button">Add client</button>
+        <div class="toolbar">
+            <div class="tabs" id="client-filter-tabs">
+                ${['all', 'marketing', 'branding'].map(f => `<button data-filter="${f}" class="${state.clientFilter === f ? 'active' : ''}">${f.toUpperCase()}</button>`).join('')}
+            </div>
         </div>
+        <div class="grid grid-3" id="clients-grid"></div>
     `;
 
-    function paintList() {
-        const list = qs('#clients-list');
-        list.innerHTML = state.clients.length ? state.clients.map(c => `
-            <div class="list-row" data-id="${c.id}">
-                <div class="list-row-main">
-                    <div class="list-row-title">${escapeHtml(c.name)}</div>
-                </div>
-                <div class="list-row-actions">
-                    <button class="btn btn-sm" data-action="rename">Rename</button>
-                    <button class="btn btn-sm btn-danger" data-action="delete">Delete</button>
-                </div>
-            </div>
-        `).join('') : '<div class="empty-state">No clients yet</div>';
-    }
-    paintList();
-
-    qs('#add-client-btn').addEventListener('click', async () => {
-        const input = qs('#new-client-name');
-        const name = input.value.trim();
-        if (!name) return showToast('Name is required');
-        const client = await api('/api/clients', { method: 'POST', body: JSON.stringify({ name }) });
-        state.clients.push(client);
-        input.value = '';
-        paintList();
-        showToast('Client added');
+    qsa('[data-filter]', qs('#client-filter-tabs')).forEach(btn => {
+        btn.addEventListener('click', () => { state.clientFilter = btn.dataset.filter; renderClients(); });
     });
 
-    qs('#clients-list').addEventListener('click', async event => {
-        const button = event.target.closest('button[data-action]');
-        if (!button) return;
-        const row = button.closest('.list-row');
-        const id = Number(row.dataset.id);
-        const client = state.clients.find(c => c.id === id);
+    const filtered = state.clients.filter(c => state.clientFilter === 'all' || c.type === state.clientFilter);
+    const grid = qs('#clients-grid');
+    grid.innerHTML = filtered.length ? filtered.map(c => `
+        <div class="client-card ${healthClass(c.health_score)}" data-id="${c.id}">
+            <span class="health-score ${healthClass(c.health_score)}">${c.health_score}/100</span>
+            <div class="client-meta">${String(c.number).padStart(2, '0')} - ${c.type}</div>
+            <h3>${escapeHtml(c.name)}</h3>
+            <div class="client-row"><span>Posts this week</span><strong>${c.posts_actual}/${c.posts_target}</strong></div>
+            <div class="client-row"><span>Lead</span><strong>${escapeHtml(c.lead_name || '-')}</strong></div>
+            <div class="client-row"><span>Sales</span><strong>${escapeHtml(c.sales_name || '-')}</strong></div>
+            <div class="client-row"><span>Next shoot</span><strong>${escapeHtml(c.next_shoot_date || '-')}</strong></div>
+            <div class="health-bar-track"><div class="health-bar-fill ${healthClass(c.health_score)}" style="width:${c.health_score}%"></div></div>
+        </div>
+    `).join('') : '<div class="empty-state">No clients in this filter</div>';
 
-        if (button.dataset.action === 'delete') {
-            await api(`/api/clients/${id}`, { method: 'DELETE' });
-            state.clients = state.clients.filter(c => c.id !== id);
-            paintList();
-            showToast('Client removed');
-        }
-        if (button.dataset.action === 'rename') {
-            const name = prompt('Rename client', client.name);
-            if (!name || !name.trim()) return;
-            const updated = await api(`/api/clients/${id}`, { method: 'PUT', body: JSON.stringify({ name: name.trim() }) });
-            client.name = updated.name;
-            paintList();
-            showToast('Client updated');
-        }
+    qs('#add-client-btn').addEventListener('click', openAddClientModal);
+}
+
+function openAddClientModal() {
+    showModal(`
+        <h2 class="serif">Request new client</h2>
+        <form id="add-client-form">
+            <div class="form-group"><label>Name</label><input type="text" name="name" required></div>
+            <div class="form-group"><label>Type</label>
+                <select name="type"><option value="marketing">Marketing</option><option value="branding">Branding</option></select>
+            </div>
+            <div class="form-group"><label>Lead</label><input type="text" name="lead_name"></div>
+            <div class="form-group"><label>Sales owner</label><input type="text" name="sales_name"></div>
+            <div class="form-group"><label>Contract value</label><input type="number" name="contract_value" value="0"></div>
+            <div class="form-group"><label>Retainer / month</label><input type="number" name="retainer_amount" value="0"></div>
+            <div class="modal-footer">
+                <button type="button" class="btn" data-modal-close>Cancel</button>
+                <button type="submit" class="btn btn-primary">Add</button>
+            </div>
+        </form>
+    `);
+    qs('#add-client-form').addEventListener('submit', async e => {
+        e.preventDefault();
+        const f = e.currentTarget;
+        const client = await api('/api/clients', {
+            method: 'POST',
+            body: JSON.stringify({
+                name: f.name.value.trim(), type: f.type.value, lead_name: f.lead_name.value.trim() || null,
+                sales_name: f.sales_name.value.trim() || null,
+                contract_value: Number(f.contract_value.value) || 0, retainer_amount: Number(f.retainer_amount.value) || 0,
+            }),
+        });
+        state.clients.push(client);
+        closeModal();
+        renderClients();
+        showToast('Client added');
     });
 }
 
 // ---- Tasks ----
 
 function renderTasks() {
-    const root = qs('#screen-tasks');
+    const root = qs('#page-tasks');
     const clientOptions = state.clients.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+    const open = state.tasks.filter(t => t.status !== 'done').length;
+    const overdue = state.tasks.filter(t => t.due_date && t.due_date < new Date().toISOString().slice(0, 10) && t.status !== 'done').length;
+
     root.innerHTML = `
-        <div class="section-header">
-            <h1>Task</h1>
-            <p>Track work across all clients</p>
+        <div class="page-header">
+            <div><h1 class="serif">Tasks</h1><p>${open} active - ${overdue} overdue</p></div>
         </div>
         <div class="list" id="tasks-list"></div>
         <div class="inline-form">
             <input type="text" id="new-task-title" placeholder="New task">
             <select id="new-task-client"><option value="">Unassigned</option>${clientOptions}</select>
+            <input type="text" id="new-task-lead" placeholder="Creative lead">
+            <select id="new-task-priority"><option value="normal">Normal</option><option value="high">High</option></select>
             <input type="date" id="new-task-due">
-            <button class="btn btn-primary" id="add-task-btn" type="button">Add task</button>
+            <button class="btn btn-primary" id="add-task-btn" type="button">+ New task</button>
         </div>
     `;
 
-    function paintList() {
+    function paint() {
         const list = qs('#tasks-list');
-        list.innerHTML = state.tasks.length ? state.tasks.map(t => `
+        list.innerHTML = state.tasks.length ? state.tasks.map(t => {
+            const overdueFlag = t.due_date && t.due_date < new Date().toISOString().slice(0, 10) && t.status !== 'done';
+            return `
             <div class="list-row ${t.status === 'done' ? 'is-done' : ''}" data-id="${t.id}">
                 <div class="list-row-main">
                     <input type="checkbox" data-action="toggle" ${t.status === 'done' ? 'checked' : ''}>
                     <div>
-                        <div class="list-row-title">${escapeHtml(t.title)}</div>
-                        <div class="list-row-meta">${escapeHtml(clientName(t.client_id))}${t.due_date ? ' - due ' + escapeHtml(t.due_date) : ''}</div>
+                        <div class="list-row-title">${escapeHtml(t.title)} ${t.priority === 'high' ? '<span class="tag is-priority">High</span>' : ''} ${overdueFlag ? '<span class="tag is-accent">Overdue</span>' : ''}</div>
+                        <div class="list-row-meta">${escapeHtml(t.client_name || 'Unassigned')} - ${escapeHtml(t.creative_lead || 'Unassigned lead')} - ${escapeHtml(t.content_type || '')} ${t.due_date ? '- due ' + escapeHtml(t.due_date) : ''}</div>
                     </div>
                 </div>
-                <div class="list-row-actions">
-                    <button class="btn btn-sm btn-danger" data-action="delete">Delete</button>
-                </div>
+                <div class="list-row-actions"><button class="btn btn-sm btn-danger" data-action="delete">Delete</button></div>
             </div>
-        `).join('') : '<div class="empty-state">No tasks yet</div>';
+        `;
+        }).join('') : '<div class="empty-state">No tasks yet</div>';
     }
-    paintList();
+    paint();
 
     qs('#add-task-btn').addEventListener('click', async () => {
-        const titleInput = qs('#new-task-title');
-        const clientSelect = qs('#new-task-client');
-        const dueInput = qs('#new-task-due');
-        const title = titleInput.value.trim();
+        const title = qs('#new-task-title').value.trim();
         if (!title) return showToast('Title is required');
         const task = await api('/api/tasks', {
             method: 'POST',
             body: JSON.stringify({
                 title,
-                client_id: clientSelect.value ? Number(clientSelect.value) : null,
-                due_date: dueInput.value || null,
+                client_id: qs('#new-task-client').value ? Number(qs('#new-task-client').value) : null,
+                creative_lead: qs('#new-task-lead').value.trim() || null,
+                priority: qs('#new-task-priority').value,
+                due_date: qs('#new-task-due').value || null,
             }),
         });
+        task.client_name = clientById(task.client_id)?.name || null;
         state.tasks.push(task);
-        titleInput.value = '';
-        dueInput.value = '';
-        paintList();
+        qs('#new-task-title').value = '';
+        qs('#new-task-lead').value = '';
+        qs('#new-task-due').value = '';
+        paint();
         showToast('Task added');
     });
 
-    qs('#tasks-list').addEventListener('click', async event => {
-        const target = event.target;
-        const row = target.closest('.list-row');
+    qs('#tasks-list').addEventListener('click', async e => {
+        const row = e.target.closest('.list-row');
         if (!row) return;
         const id = Number(row.dataset.id);
         const task = state.tasks.find(t => t.id === id);
-
-        if (target.matches('[data-action="toggle"]')) {
-            const status = target.checked ? 'done' : 'open';
-            const updated = await api(`/api/tasks/${id}`, { method: 'PUT', body: JSON.stringify({ status }) });
+        if (e.target.matches('[data-action="toggle"]')) {
+            const updated = await api(`/api/tasks/${id}`, { method: 'PUT', body: JSON.stringify({ status: e.target.checked ? 'done' : 'planned' }) });
             task.status = updated.status;
-            paintList();
+            paint();
         }
-        const button = target.closest('button[data-action="delete"]');
-        if (button) {
+        if (e.target.closest('button[data-action="delete"]')) {
             await api(`/api/tasks/${id}`, { method: 'DELETE' });
             state.tasks = state.tasks.filter(t => t.id !== id);
-            paintList();
+            paint();
             showToast('Task removed');
         }
+    });
+}
+
+// ---- Deliverables ----
+
+const DELIVERABLE_STATUSES = ['pending_approval', 'approved', 'pending_revision', 'pending_delivery', 'posted'];
+const STATUS_LABEL = {
+    pending_approval: 'Pending approval', approved: 'Approved', pending_revision: 'Pending revision',
+    pending_delivery: 'Pending delivery', posted: 'Posted',
+};
+
+function renderDeliverables() {
+    const root = qs('#page-deliverables');
+    root.innerHTML = `
+        <div class="page-header">
+            <div><h1 class="serif">Deliverables</h1><p>${state.deliverables.length} across ${state.clients.length} clients</p></div>
+            <button class="btn" id="export-deliverables" type="button">Export PDF</button>
+        </div>
+        <div class="tabs" id="deliverable-filter-tabs">
+            <button data-filter="all" class="${state.deliverableFilter === 'all' ? 'active' : ''}">ALL</button>
+            ${DELIVERABLE_STATUSES.map(s => `<button data-filter="${s}" class="${state.deliverableFilter === s ? 'active' : ''}">${STATUS_LABEL[s].toUpperCase()}</button>`).join('')}
+        </div>
+        <div id="deliverables-by-client" style="margin-top:16px"></div>
+    `;
+
+    qsa('[data-filter]', qs('#deliverable-filter-tabs')).forEach(btn => {
+        btn.addEventListener('click', () => { state.deliverableFilter = btn.dataset.filter; renderDeliverables(); });
+    });
+
+    const filtered = state.deliverables.filter(d => state.deliverableFilter === 'all' || d.status === state.deliverableFilter);
+    const byClient = {};
+    filtered.forEach(d => {
+        const key = d.client_name || 'Unassigned';
+        byClient[key] = byClient[key] || [];
+        byClient[key].push(d);
+    });
+
+    const container = qs('#deliverables-by-client');
+    container.innerHTML = Object.keys(byClient).length ? Object.entries(byClient).map(([clientName, items]) => `
+        <div class="client-section">
+            <div class="client-section-head">
+                <h3>${escapeHtml(clientName)} <span style="color:var(--ink-soft);font-weight:400">(${items.length})</span></h3>
+                <button class="btn btn-sm" data-action="add-deliverable" data-client="${escapeHtml(clientName)}" type="button">+ Add deliverable</button>
+            </div>
+            <div class="list">
+                ${items.map(d => `
+                    <div class="list-row" data-id="${d.id}">
+                        <div class="list-row-main">
+                            <input type="checkbox" data-action="toggle" ${d.status === 'posted' ? 'checked' : ''}>
+                            <div class="list-row-title">${escapeHtml(d.title)}</div>
+                            <span class="tag">${escapeHtml(d.type)}</span>
+                            <span class="tag is-accent">${STATUS_LABEL[d.status] || d.status}</span>
+                        </div>
+                        <div class="list-row-actions"><button class="btn btn-sm btn-danger" data-action="delete">Delete</button></div>
+                    </div>
+                `).join('')}
+            </div>
+        </div>
+    `).join('') : '<div class="empty-state">No deliverables in this filter</div>';
+
+    container.addEventListener('click', async e => {
+        const addBtn = e.target.closest('[data-action="add-deliverable"]');
+        if (addBtn) return openAddDeliverableModal(addBtn.dataset.client);
+
+        const row = e.target.closest('.list-row');
+        if (!row) return;
+        const id = Number(row.dataset.id);
+        const deliverable = state.deliverables.find(d => d.id === id);
+        if (e.target.matches('[data-action="toggle"]')) {
+            const updated = await api(`/api/deliverables/${id}`, { method: 'PUT', body: JSON.stringify({ status: e.target.checked ? 'posted' : 'pending_approval' }) });
+            Object.assign(deliverable, updated);
+            renderDeliverables();
+        }
+        if (e.target.closest('button[data-action="delete"]')) {
+            await api(`/api/deliverables/${id}`, { method: 'DELETE' });
+            state.deliverables = state.deliverables.filter(d => d.id !== id);
+            renderDeliverables();
+            showToast('Deliverable removed');
+        }
+    });
+
+    qs('#export-deliverables').addEventListener('click', () => window.print());
+}
+
+function openAddDeliverableModal(clientName) {
+    const client = state.clients.find(c => c.name === clientName);
+    showModal(`
+        <h2 class="serif">Add deliverable</h2>
+        <form id="add-deliverable-form">
+            <div class="form-group"><label>Title</label><input type="text" name="title" required></div>
+            <div class="form-group"><label>Type</label><input type="text" name="type" value="Reel"></div>
+            <div class="modal-footer">
+                <button type="button" class="btn" data-modal-close>Cancel</button>
+                <button type="submit" class="btn btn-primary">Add</button>
+            </div>
+        </form>
+    `);
+    qs('#add-deliverable-form').addEventListener('submit', async e => {
+        e.preventDefault();
+        const f = e.currentTarget;
+        const d = await api('/api/deliverables', {
+            method: 'POST',
+            body: JSON.stringify({ title: f.title.value.trim(), type: f.type.value.trim() || 'Reel', client_id: client ? client.id : null }),
+        });
+        d.client_name = client ? client.name : null;
+        state.deliverables.push(d);
+        closeModal();
+        renderDeliverables();
+        showToast('Deliverable added');
+    });
+}
+
+// ---- Library (stub) ----
+
+function renderLibrary() {
+    const root = qs('#page-library');
+    const posted = state.deliverables.filter(d => d.status === 'posted');
+    root.innerHTML = `
+        <div class="page-header"><div><h1 class="serif">Library</h1><p>Completed deliverables across all clients</p></div></div>
+        <div class="grid grid-3">
+            ${posted.length ? posted.map(d => `
+                <div class="card">
+                    <div class="client-meta">${escapeHtml(d.client_name || 'Unassigned')}</div>
+                    <h3 style="font-size:15px;margin-top:4px">${escapeHtml(d.title)}</h3>
+                    <span class="tag">${escapeHtml(d.type)}</span>
+                </div>
+            `).join('') : '<div class="empty-state">Nothing posted yet</div>'}
+        </div>
+    `;
+}
+
+// ---- Studio (UI placeholder) ----
+
+function renderStudio() {
+    const root = qs('#page-studio');
+    root.innerHTML = `
+        <div class="page-header"><div><h1 class="serif">Studio</h1><p>From transcript to angles</p></div></div>
+        <div class="studio-grid">
+            <div class="studio-card">
+                <h3>Angles</h3>
+                <p>Paste a brief or transcript to generate 6-8 content angles.</p>
+                <textarea placeholder="Paste brief or transcript..."></textarea>
+                <button class="btn btn-primary" style="margin-top:10px" type="button" disabled>Generate angles</button>
+            </div>
+            <div class="studio-card">
+                <h3>Library</h3>
+                <p>Browse completed deliverables for reference, pitch decks, and re-cuts.</p>
+                <button class="btn" style="margin-top:10px" type="button" data-action="open-library">Open library</button>
+            </div>
+            <div class="studio-card">
+                <h3>Scripts / UGC</h3>
+                <p>Talking-head scripts, hook variations, and caption sets.</p>
+                <textarea placeholder="Describe the product or offer..."></textarea>
+                <button class="btn btn-primary" style="margin-top:10px" type="button" disabled>Generate scripts</button>
+            </div>
+        </div>
+        <p style="margin-top:16px;font-size:12px">AI generation is not wired up yet - these are placeholders.</p>
+    `;
+    qs('[data-action="open-library"]')?.addEventListener('click', () => goToTab('library'));
+}
+
+// ---- Accounting (Sales) ----
+
+async function renderAccounting() {
+    const root = qs('#page-accounting');
+    const [summary, expenses] = await Promise.all([api('/api/accounting/summary'), api('/api/expenses')]);
+    root.innerHTML = `
+        <div class="page-header"><div><h1 class="serif">Accounting</h1><p>Revenue, expenses, and gross profit</p></div></div>
+        <div class="grid grid-4">
+            <div class="card stat-card"><span>Gross Revenue</span><strong>${money(summary.grossRevenue)}</strong></div>
+            <div class="card stat-card"><span>Contracts</span><strong>${money(summary.contractRevenue)}</strong></div>
+            <div class="card stat-card"><span>Retainers / mo</span><strong>${money(summary.retainerRevenue)}</strong></div>
+            <div class="card stat-card"><span>Gross Profit</span><strong style="color:${summary.grossProfit >= 0 ? 'var(--good)' : 'var(--accent)'}">${money(summary.grossProfit)}</strong></div>
+        </div>
+
+        <div class="card" style="margin-top:18px">
+            <h3>Clients - contract & retainer</h3>
+            <div class="list">
+                ${state.clients.map(c => `
+                    <div class="list-row">
+                        <div class="list-row-main">
+                            <div>
+                                <div class="list-row-title">${escapeHtml(c.name)}</div>
+                                <div class="list-row-meta">${escapeHtml(c.contract_status)} - contract ${money(c.contract_value)} - retainer ${money(c.retainer_amount)}/mo</div>
+                            </div>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        </div>
+
+        <div class="card" style="margin-top:18px">
+            <div class="toolbar"><h3 style="margin:0">Expenses</h3><span>Total ${money(summary.totalExpenses)}</span></div>
+            <div class="list" id="expenses-list">
+                ${expenses.length ? expenses.map(e => `
+                    <div class="list-row" data-id="${e.id}">
+                        <div class="list-row-main">
+                            <div>
+                                <div class="list-row-title">${escapeHtml(e.description)} - ${money(e.amount)}</div>
+                                <div class="list-row-meta">${escapeHtml(e.category)} - ${escapeHtml(e.client_name || 'Agency')} - ${escapeHtml(e.expense_date)}</div>
+                            </div>
+                        </div>
+                        <div class="list-row-actions"><button class="btn btn-sm btn-danger" data-action="delete-expense">Delete</button></div>
+                    </div>
+                `).join('') : '<div class="empty-state">No expenses logged</div>'}
+            </div>
+            <div class="inline-form">
+                <input type="text" id="exp-desc" placeholder="Description">
+                <input type="number" id="exp-amount" placeholder="Amount">
+                <input type="text" id="exp-category" placeholder="Category">
+                <input type="date" id="exp-date">
+                <button class="btn btn-primary" id="add-expense-btn" type="button">+ Add expense</button>
+            </div>
+        </div>
+    `;
+
+    qs('#add-expense-btn').addEventListener('click', async () => {
+        const description = qs('#exp-desc').value.trim();
+        if (!description) return showToast('Description is required');
+        await api('/api/expenses', {
+            method: 'POST',
+            body: JSON.stringify({
+                description, amount: Number(qs('#exp-amount').value) || 0,
+                category: qs('#exp-category').value.trim() || 'General',
+                expense_date: qs('#exp-date').value || null,
+            }),
+        });
+        renderAccounting();
+        showToast('Expense added');
+    });
+
+    qs('#expenses-list').addEventListener('click', async e => {
+        const row = e.target.closest('.list-row');
+        if (!row || !e.target.closest('[data-action="delete-expense"]')) return;
+        await api(`/api/expenses/${row.dataset.id}`, { method: 'DELETE' });
+        renderAccounting();
+        showToast('Expense removed');
     });
 }
 
 // ---- Calendar ----
 
 function renderCalendar() {
-    const root = qs('#screen-calendar');
+    const root = qs('#page-calendar');
     root.innerHTML = `
         <div class="toolbar">
-            <div class="section-header" style="margin-bottom:0">
-                <h1>Calendar</h1>
-                <p>Tasks by due date</p>
-            </div>
+            <div class="page-header" style="margin-bottom:0"><div><h1 class="serif">Calendar</h1><p>Shoots, production, and ads by date</p></div></div>
             <div>
                 <button class="btn btn-sm" id="cal-prev" type="button">&lt;</button>
-                <strong id="cal-label" style="margin:0 8px"></strong>
+                <strong id="cal-label" style="margin:0 8px;font-family:'Lora',serif"></strong>
                 <button class="btn btn-sm" id="cal-next" type="button">&gt;</button>
             </div>
         </div>
@@ -272,51 +661,143 @@ function renderCalendar() {
     function paint() {
         const month = state.calendarMonth;
         qs('#cal-label').textContent = month.toLocaleString('default', { month: 'long', year: 'numeric' });
-
         const year = month.getFullYear();
         const monthIndex = month.getMonth();
         const firstDay = new Date(year, monthIndex, 1).getDay();
         const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
 
-        const tasksByDay = {};
-        state.tasks.forEach(t => {
-            if (!t.due_date) return;
-            const d = new Date(t.due_date);
+        const byDay = {};
+        state.events.forEach(ev => {
+            const d = new Date(ev.event_date);
             if (d.getFullYear() === year && d.getMonth() === monthIndex) {
                 const day = d.getDate();
-                tasksByDay[day] = tasksByDay[day] || [];
-                tasksByDay[day].push(t);
+                byDay[day] = byDay[day] || [];
+                byDay[day].push(ev);
             }
         });
 
         let cells = '';
         for (let i = 0; i < firstDay; i++) cells += '<div class="calendar-cell is-empty"></div>';
         for (let day = 1; day <= daysInMonth; day++) {
-            const tasks = tasksByDay[day] || [];
+            const events = byDay[day] || [];
             cells += `
                 <div class="calendar-cell">
                     <div class="day-num">${day}</div>
-                    ${tasks.map(t => `<div class="calendar-task">${escapeHtml(t.title)}</div>`).join('')}
+                    ${events.map(ev => `<div class="calendar-event type-${ev.type}" title="${escapeHtml(ev.assignee || '')}">${escapeHtml(ev.client_name || ev.title)}</div>`).join('')}
                 </div>
             `;
         }
         qs('#cal-grid').innerHTML = cells;
     }
 
-    qs('#cal-prev').addEventListener('click', () => {
-        state.calendarMonth = new Date(state.calendarMonth.getFullYear(), state.calendarMonth.getMonth() - 1, 1);
-        paint();
-    });
-    qs('#cal-next').addEventListener('click', () => {
-        state.calendarMonth = new Date(state.calendarMonth.getFullYear(), state.calendarMonth.getMonth() + 1, 1);
-        paint();
-    });
+    qs('#cal-prev').addEventListener('click', () => { state.calendarMonth = new Date(state.calendarMonth.getFullYear(), state.calendarMonth.getMonth() - 1, 1); paint(); });
+    qs('#cal-next').addEventListener('click', () => { state.calendarMonth = new Date(state.calendarMonth.getFullYear(), state.calendarMonth.getMonth() + 1, 1); paint(); });
 
     paint();
 }
 
-document.addEventListener('DOMContentLoaded', async () => {
-    initNavigation();
-    await loadAll();
-    renderOverview();
+// ---- Admin ----
+
+async function renderAdmin() {
+    const root = qs('#page-admin');
+    const [users, tabInfo] = await Promise.all([api('/api/admin/users'), api('/api/admin/tabs')]);
+
+    root.innerHTML = `
+        <div class="page-header"><div><h1 class="serif">Admin</h1><p>Manage team members and tab permissions</p></div></div>
+        <table class="admin-table">
+            <thead><tr><th>Name</th><th>Title</th><th>Role</th><th>Tabs</th><th></th></tr></thead>
+            <tbody id="admin-users-body"></tbody>
+        </table>
+        <div class="inline-form">
+            <input type="text" id="new-user-name" placeholder="Name">
+            <input type="text" id="new-user-title" placeholder="Title">
+            <select id="new-user-role"><option value="sales">Sales</option><option value="delivery">Delivery</option><option value="admin">Admin</option></select>
+            <button class="btn btn-primary" id="add-user-btn" type="button">+ Add user</button>
+        </div>
+    `;
+
+    function paintRows() {
+        qs('#admin-users-body').innerHTML = users.map(u => `
+            <tr data-id="${u.id}">
+                <td>${escapeHtml(u.name)}</td>
+                <td>${escapeHtml(u.title || '')}</td>
+                <td>
+                    <select data-action="role">
+                        ${['admin', 'sales', 'delivery'].map(r => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${r}</option>`).join('')}
+                    </select>
+                </td>
+                <td>
+                    <div class="tab-chip-list">
+                        ${tabInfo.allTabs.map(tab => `<span class="tab-chip ${u.tabs.includes(tab) ? 'is-on' : ''}" data-tab="${tab}">${TAB_LABELS[tab]}</span>`).join('')}
+                    </div>
+                </td>
+                <td><button class="btn btn-sm btn-danger" data-action="delete-user">Remove</button></td>
+            </tr>
+        `).join('');
+    }
+    paintRows();
+
+    qs('#admin-users-body').addEventListener('click', async e => {
+        const row = e.target.closest('tr');
+        if (!row) return;
+        const id = Number(row.dataset.id);
+        const user = users.find(u => u.id === id);
+
+        if (e.target.matches('[data-tab]')) {
+            const tab = e.target.dataset.tab;
+            const base = new Set(roleTemplate(user.role));
+            const tabs = new Set(user.tabs);
+            tabs.has(tab) ? tabs.delete(tab) : tabs.add(tab);
+            const add = Array.from(tabs).filter(t => !base.has(t));
+            const remove = Array.from(base).filter(t => !tabs.has(t));
+            const updated = await api(`/api/admin/users/${id}`, { method: 'PUT', body: JSON.stringify({ tabOverrides: { add, remove } }) });
+            user.tabs = updated.tabs;
+            paintRows();
+        }
+
+        if (e.target.closest('[data-action="delete-user"]')) {
+            await api(`/api/admin/users/${id}`, { method: 'DELETE' });
+            const idx = users.findIndex(u => u.id === id);
+            users.splice(idx, 1);
+            paintRows();
+            showToast('User removed');
+        }
+    });
+
+    qs('#admin-users-body').addEventListener('change', async e => {
+        if (!e.target.matches('[data-action="role"]')) return;
+        const row = e.target.closest('tr');
+        const id = Number(row.dataset.id);
+        const user = users.find(u => u.id === id);
+        const updated = await api(`/api/admin/users/${id}`, { method: 'PUT', body: JSON.stringify({ role: e.target.value, tabOverrides: { add: [], remove: [] } }) });
+        Object.assign(user, updated);
+        paintRows();
+    });
+
+    qs('#add-user-btn').addEventListener('click', async () => {
+        const name = qs('#new-user-name').value.trim();
+        if (!name) return showToast('Name is required');
+        const user = await api('/api/admin/users', {
+            method: 'POST',
+            body: JSON.stringify({ name, title: qs('#new-user-title').value.trim(), role: qs('#new-user-role').value }),
+        });
+        users.push(user);
+        qs('#new-user-name').value = '';
+        qs('#new-user-title').value = '';
+        paintRows();
+        showToast('User added - default PIN 0000');
+    });
+}
+
+function roleTemplate(role) {
+    const templates = {
+        admin: ['dashboard', 'clients', 'calendar', 'tasks', 'deliverables', 'library', 'studio', 'accounting', 'admin'],
+        sales: ['dashboard', 'clients', 'calendar', 'tasks', 'accounting'],
+        delivery: ['dashboard', 'clients', 'calendar', 'tasks', 'deliverables', 'library', 'studio'],
+    };
+    return templates[role] || [];
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    initCheckin();
 });
