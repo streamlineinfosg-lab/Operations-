@@ -68,19 +68,25 @@ async function initCheckin() {
     qs('#checkin-greeting').textContent = greeting;
 
     state.users = await api('/api/users');
-    const groups = { admin: 'Admin', sales: 'Sales', delivery: 'Delivery' };
+    const titleOf = u => (u.title || u.role).split('/')[0].trim();
+    const order = [];
+    const byTitle = {};
+    state.users.forEach(u => {
+        const t = titleOf(u);
+        if (!byTitle[t]) { byTitle[t] = []; order.push(t); }
+        byTitle[t].push(u);
+    });
     const root = qs('#checkin-groups');
-    root.innerHTML = Object.entries(groups).map(([key, label]) => {
-        const members = state.users.filter(u => u.role === key);
-        if (!members.length) return '';
+    root.innerHTML = order.map(title => {
+        const members = byTitle[title];
         return `
-            <div>
-                <div class="checkin-group-label">${label} - ${members.length}</div>
+            <div class="checkin-group">
+                <div class="checkin-group-label">${escapeHtml(title.toUpperCase())} &middot; ${members.length}</div>
                 <div class="checkin-avatars">
                     ${members.map(u => `
                         <button class="avatar-btn" data-user-id="${u.id}" type="button">
-                            <span class="avatar-circle">${escapeHtml(u.name.slice(0, 2).toUpperCase())}</span>
-                            <span>${escapeHtml(u.name)}</span>
+                            <span class="avatar-circle">${escapeHtml(u.name.slice(0, 1).toUpperCase())}</span>
+                            <span class="avatar-name serif">${escapeHtml(u.name)}</span>
                         </button>
                     `).join('')}
                 </div>

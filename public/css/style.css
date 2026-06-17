@@ -1,14 +1,14 @@
 :root {
-    --bg: #fafafa;
+    --bg: #faf9f7;
     --surface: #ffffff;
-    --ink: #111111;
-    --ink-soft: #6e6e6e;
-    --outline: #e2e2e2;
-    --accent: #c0392b;
-    --accent-soft: #fbe9e7;
-    --good: #2f6f4e;
-    --radius: 6px;
-    --shadow: 0 1px 3px rgba(0,0,0,0.06);
+    --ink: #1f1b16;
+    --ink-soft: #6b6357;
+    --outline: #e7e2d9;
+    --accent: #c25e3a;
+    --accent-soft: #f4e3da;
+    --good: #3d7a4f;
+    --radius: 10px;
+    --shadow: 0 1px 2px rgba(31, 27, 22, 0.06);
 }
 
 * { box-sizing: border-box; }
@@ -27,45 +27,61 @@ body {
 
 /* ---- Check-in ---- */
 
-.checkin-wrap { text-align: center; max-width: 640px; padding: 40px; }
+.checkin-wrap { text-align: center; max-width: 680px; padding: 40px; }
 .checkin-greeting { font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 8px; }
-.checkin-wrap h1 { font-size: 32px; font-weight: 600; margin: 0 0 32px; }
+.checkin-wrap h1 { font-size: 32px; font-weight: 600; font-style: italic; margin: 0 0 36px; }
 
-.checkin-groups { display: flex; flex-direction: column; gap: 24px; }
-.checkin-group-label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-soft); margin-bottom: 10px; text-align: left; }
-.checkin-avatars { display: flex; flex-wrap: wrap; gap: 12px; }
+.checkin-groups { display: flex; flex-direction: column; gap: 28px; }
+.checkin-group { text-align: left; }
+.checkin-group-label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-soft);
+    margin-bottom: 12px; padding-top: 8px; border-top: 2px solid var(--accent); display: inline-block;
+}
+.checkin-avatars { display: flex; flex-wrap: wrap; gap: 18px; }
 
 .avatar-btn {
-    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
     border: none; background: none; cursor: pointer; width: 92px;
 }
 .avatar-circle {
-    width: 56px; height: 56px; border-radius: 50%;
-    background: var(--ink); color: #fff;
+    width: 58px; height: 58px; border-radius: 50%;
+    background: var(--accent-soft); color: var(--accent);
+    border: 1px solid var(--accent-soft);
     display: flex; align-items: center; justify-content: center;
-    font-family: 'Lora', serif; font-size: 18px; font-weight: 600;
+    font-family: 'Lora', serif; font-style: italic; font-size: 22px; font-weight: 600;
+    transition: background 0.15s, color 0.15s, transform 0.1s;
 }
-.avatar-btn span { font-size: 12px; color: var(--ink); font-weight: 500; }
-.avatar-btn:hover .avatar-circle { background: var(--accent); }
+.avatar-name { font-size: 13px; color: var(--ink); font-weight: 500; font-style: italic; }
+.avatar-btn:hover .avatar-circle { background: var(--accent); color: #fff; transform: translateY(-2px); }
 
 /* ---- PIN ---- */
 
-.pin-wrap { text-align: center; max-width: 360px; padding: 40px; position: relative; }
+.pin-wrap { text-align: center; max-width: 340px; padding: 40px; position: relative; }
 .link-back { position: absolute; top: 0; left: 0; border: none; background: none; color: var(--ink-soft); font-size: 13px; cursor: pointer; }
-.pin-wrap h2 { font-size: 24px; margin: 24px 0 0; }
-.pin-wrap p { color: var(--ink-soft); font-size: 13px; margin: 4px 0 24px; }
+.link-back:hover { color: var(--accent); }
+.pin-wrap h2 { font-size: 26px; font-style: italic; margin: 24px 0 0; }
+.pin-wrap p { color: var(--ink-soft); font-size: 13px; margin: 4px 0 30px; text-transform: uppercase; letter-spacing: 0.06em; }
 
-.pin-dots { display: flex; justify-content: center; gap: 14px; margin-bottom: 28px; }
-.pin-dots span { width: 14px; height: 14px; border-radius: 50%; border: 1px solid var(--outline); display: block; }
-.pin-dots span.filled { background: var(--ink); border-color: var(--ink); }
-
-.pin-pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-.pin-key {
-    padding: 16px 0; border-radius: 50%; border: 1px solid var(--outline);
-    background: var(--surface); font-size: 18px; cursor: pointer;
+.pin-dots { display: flex; justify-content: center; gap: 18px; margin-bottom: 36px; }
+.pin-dots span {
+    width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid var(--outline);
+    display: block; transition: all 0.15s;
 }
-.pin-key:hover { background: var(--accent-soft); }
-.pin-error { color: var(--accent); font-size: 13px; height: 18px; margin-top: 16px; }
+.pin-dots span.filled { background: var(--accent); border-color: var(--accent); transform: scale(1.1); }
+
+.pin-pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.pin-key {
+    padding: 20px 0; border-radius: 50%; border: none;
+    background: var(--surface); box-shadow: var(--shadow);
+    font-family: 'Lora', serif; font-size: 20px; font-weight: 500; color: var(--ink); cursor: pointer;
+    transition: background 0.12s, color 0.12s, transform 0.08s;
+}
+.pin-key:hover { background: var(--accent-soft); color: var(--accent); }
+.pin-key:active { transform: scale(0.94); }
+.pin-key[data-key="OK"] { background: var(--accent); color: #fff; font-family: 'Inter', sans-serif; font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; }
+.pin-key[data-key="OK"]:hover { background: var(--ink); }
+.pin-key[data-key="<"] { color: var(--ink-soft); font-family: 'Inter', sans-serif; font-size: 14px; }
+.pin-error { color: var(--accent); font-size: 13px; height: 18px; margin-top: 18px; }
 
 /* ---- App shell ---- */
 
