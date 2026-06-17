@@ -67,44 +67,25 @@ async function api(path, options = {}) {
 
 function clientById(id) { return state.clients.find(c => c.id === id); }
 
-// ---- Check-in / PIN / Login ----
+// ---- User ID / PIN / Login ----
 
 async function initCheckin() {
-    const hour = new Date().getHours();
-    const greeting = hour < 5 ? 'Late evening' : hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : hour < 21 ? 'Good evening' : 'Late evening';
-    qs('#checkin-greeting').textContent = greeting;
-
     state.users = await api('/api/users');
-    const titleOf = u => (u.title || u.role).split('/')[0].trim();
-    const order = [];
-    const byTitle = {};
-    state.users.forEach(u => {
-        const t = titleOf(u);
-        if (!byTitle[t]) { byTitle[t] = []; order.push(t); }
-        byTitle[t].push(u);
-    });
-    const root = qs('#checkin-groups');
-    root.innerHTML = order.map(title => {
-        const members = byTitle[title];
-        return `
-            <div class="checkin-group">
-                <div class="checkin-group-label">${escapeHtml(title.toUpperCase())} &middot; ${members.length}</div>
-                <div class="checkin-avatars">
-                    ${members.map(u => `
-                        <button class="avatar-btn" data-user-id="${u.id}" type="button">
-                            <span class="avatar-circle">${escapeHtml(u.name.slice(0, 1).toUpperCase())}</span>
-                            <span class="avatar-name serif">${escapeHtml(u.name)}</span>
-                        </button>
-                    `).join('')}
-                </div>
-            </div>
-        `;
-    }).join('');
-
-    qsa('[data-user-id]', root).forEach(btn => {
-        btn.addEventListener('click', () => openPinScreen(Number(btn.dataset.userId), 'login'));
-    });
+    qs('#userid-input').value = '';
+    qs('#userid-error').textContent = '';
 }
+
+qs('#userid-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const name = qs('#userid-input').value.trim();
+    if (!name) return;
+    const user = state.users.find(u => u.name.toLowerCase() === name.toLowerCase());
+    if (!user) {
+        qs('#userid-error').textContent = 'No team member found with that name.';
+        return;
+    }
+    openPinScreen(user.id, 'login');
+});
 
 function openPinScreen(userId, mode) {
     const user = state.users.find(u => u.id === userId) || state.currentUser;
@@ -112,7 +93,7 @@ function openPinScreen(userId, mode) {
     state.pinMode = mode;
     state.pinDigits = '';
     qs('#pin-name').textContent = user.name;
-    qs('#pin-title').textContent = mode === 'change' ? 'Enter current PIN' : (user.title || '');
+    qs('#pin-title').textContent = mode === 'change' ? 'Enter current PIN' : (user.title || '').toUpperCase();
     qs('#pin-error').textContent = '';
     paintPinDots();
     paintPinPad();
@@ -125,8 +106,8 @@ function paintPinDots() {
 
 function paintPinPad() {
     const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '<', '0', 'OK'];
-    qs('#pin-pad').innerHTML = keys.map(k => `<button class="pin-key" data-key="${k}" type="button">${k}</button>`).join('');
-    qsa('.pin-key', qs('#pin-pad')).forEach(btn => btn.addEventListener('click', () => handlePinKey(btn.dataset.key)));
+    qs('#pin-pad').innerHTML = keys.map(k => `<button class="login-key" data-key="${k}" type="button">${k}</button>`).join('');
+    qsa('.login-key', qs('#pin-pad')).forEach(btn => btn.addEventListener('click', () => handlePinKey(btn.dataset.key)));
 }
 
 function handlePinKey(key) {
@@ -180,7 +161,8 @@ qs('#pin-back').addEventListener('click', () => {
         switchScreen(null);
         qs('#app-layout').classList.add('active');
     } else {
-        switchScreen('screen-checkin');
+        state.pinDigits = '';
+        switchScreen('screen-userid');
     }
 });
 
@@ -232,7 +214,7 @@ function goToTab(tab) {
 
 qs('#logout-btn').addEventListener('click', () => {
     state.currentUser = null;
-    switchScreen('screen-checkin');
+    switchScreen('screen-userid');
     initCheckin();
 });
 
