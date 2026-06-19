@@ -13,6 +13,9 @@ const state = {
     deliverableFilter: 'all',
     taskFilter: 'all',
     clientFilter: 'all',
+    dashboardPanel: null,
+    reviewForm: { sentiment: 'neutral' },
+    updateForm: { status: 'on_track' },
 };
 
 const TAB_LABELS = {
@@ -230,20 +233,191 @@ async function loadAll() {
 
 // ---- Dashboard ----
 
+const SENTIMENT_OPTS = [['good', 'Good'], ['neutral', 'Neutral'], ['risk', 'At risk']];
+const STATUS_OPTS = [['on_track', 'On track'], ['delayed', 'Delayed'], ['blocked', 'Blocked']];
+
 async function renderDashboard() {
     const root = qs('#page-dashboard');
     const d = await api('/api/dashboard');
+    state.dashboardData = d;
+    if (!state.dashboardPanel) state.dashboardPanel = null;
+    if (!state.reviewForm) state.reviewForm = { sentiment: 'neutral' };
+    if (!state.updateForm) state.updateForm = { status: 'on_track' };
+
+    const todayLabel = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }).toUpperCase();
+
     root.innerHTML = `
-        <div class="page-header">
-            <div><h1 class="serif">Dashboard</h1><p>Aggregate view across all clients</p></div>
-        </div>
+        <div class="dash-heading">${todayLabel}</div>
+        <h1 class="dash-title">Today, <em>attention needed.</em></h1>
+
         <div class="grid grid-4">
             <div class="card stat-card"><span>Active Clients</span><strong>${d.activeClients}</strong></div>
             <div class="card stat-card"><span>Posts This Week</span><strong>${d.postsThisWeek.actual}/${d.postsThisWeek.target}</strong></div>
-            <div class="card stat-card"><span>Shoots This Month</span><strong>${d.shootsThisMonth}</strong></div>
+            <div class="card stat-card"><span>Posts This Month</span><strong style="color:#a9700a">${d.postsThisMonth.actual}/${d.postsThisMonth.target}</strong></div>
             <div class="card stat-card"><span>Critical Clients</span><strong style="color:var(--accent)">${d.criticalClients}</strong></div>
         </div>
+
+        <div class="action-cards">
+            <div class="action-card ${state.dashboardPanel === 'review' ? 'active' : ''}" data-panel="review">
+                <span class="icon">&#9998;</span>
+                <div><h4>File a review</h4><p>Daily client check-in</p></div>
+            </div>
+            <div class="action-card ${state.dashboardPanel === 'update' ? 'active' : ''}" data-panel="update">
+                <span class="icon">&#8635;</span>
+                <div><h4>File an update</h4><p>Quick status note</p></div>
+            </div>
+            <div class="action-card ${state.dashboardPanel === 'suggest' ? 'active' : ''}" data-panel="suggest">
+                <span class="icon">&#10022;</span>
+                <div><h4>This week's focus</h4><p>AI · from reviews &amp; updates</p></div>
+            </div>
+        </div>
+
+        <div id="dashboard-panel-slot"></div>
+
+        <div class="feed-attention">
+            <div>
+                <div class="section-heading"><h2>Recent <em>activity.</em></h2><span>reviews &amp; updates</span></div>
+                <div class="feed-list">
+                    ${d.feed.length ? d.feed.map(f => `
+                        <div class="feed-row">
+                            <span class="feed-avatar">${escapeHtml(f.initials)}</span>
+                            <div>
+                                <div class="feed-top">
+                                    <strong>${escapeHtml(f.client)}</strong>
+                                    <span class="feed-tag" style="background:${f.tagBg};color:${f.tagColor}">${escapeHtml(f.status)}</span>
+                                    <span class="feed-meta">${escapeHtml(f.member)} &middot; ${escapeHtml(f.time)}</span>
+                                </div>
+                                <div class="feed-note">${escapeHtml(f.note)}</div>
+                            </div>
+                        </div>
+                    `).join('') : '<div class="suggest-empty">No activity filed yet.</div>'}
+                </div>
+            </div>
+            <div>
+                <div class="section-heading"><h2>Needs <em>attention.</em></h2></div>
+                ${d.needsAttention.length ? d.needsAttention.map(c => `
+                    <div class="attention-card">
+                        <div class="attention-top"><strong>${escapeHtml(c.name)}</strong><strong style="color:${c.statusColor}">${c.health}</strong></div>
+                        <div class="attention-bar"><div style="width:${c.pct}%;background:${c.bar}"></div></div>
+                        <div class="attention-reason">${escapeHtml(c.reason)}</div>
+                    </div>
+                `).join('') : '<div class="suggest-empty">All clients healthy.</div>'}
+            </div>
+        </div>
     `;
+
+    qsa('.action-card', root).forEach(card => {
+        card.addEventListener('click', () => {
+            const panel = card.dataset.panel;
+            state.dashboardPanel = state.dashboardPanel === panel ? null : panel;
+            renderDashboard();
+        });
+    });
+
+    renderDashboardPanel();
+}
+
+function renderDashboardPanel() {
+    const slot = qs('#dashboard-panel-slot');
+    if (!slot) return;
+    const d = state.dashboardData;
+    const panel = state.dashboardPanel;
+
+    if (panel === 'review') {
+        slot.innerHTML = `
+            <div class="section-heading"><h2>File a <em>review.</em></h2><span>daily client check-in</span></div>
+            <div class="panel">
+                <div class="panel-grid" style="grid-template-columns:1.7fr 1fr 1.4fr">
+                    <div><label>Client</label><select id="rv-client">${state.clients.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('')}</select></div>
+                    <div><label>Leads this week</label><input id="rv-leads" type="number" min="0" placeholder="0"></div>
+                    <div><label>Next shoot</label><input id="rv-shoot" type="text" placeholder="e.g. Jun 24"></div>
+                </div>
+                <div style="margin-bottom:14px">
+                    <label>Client sentiment</label>
+                    <div class="chip-select" id="rv-sentiment">
+                        ${SENTIMENT_OPTS.map(([v, l]) => `<div data-val="${v}" class="${state.reviewForm.sentiment === v ? 'sel-' + v : ''}">${l}</div>`).join('')}
+                    </div>
+                </div>
+                <div class="panel-grid" style="grid-template-columns:1fr 1.4fr">
+                    <div><label>Blockers / risks</label><input id="rv-blockers" placeholder="e.g. slow approvals"></div>
+                    <div><label>Notes</label><input id="rv-notes" placeholder="What happened with this client today?"></div>
+                </div>
+                <button class="btn btn-primary" id="rv-submit" type="button">Submit review</button>
+            </div>
+        `;
+        qsa('#rv-sentiment div', slot).forEach(chip => chip.addEventListener('click', () => {
+            state.reviewForm.sentiment = chip.dataset.val;
+            renderDashboardPanel();
+        }));
+        qs('#rv-submit', slot).addEventListener('click', async () => {
+            await api('/api/reviews', {
+                method: 'POST',
+                body: JSON.stringify({
+                    client_id: Number(qs('#rv-client', slot).value),
+                    member_name: state.currentUser.name,
+                    leads: qs('#rv-leads', slot).value,
+                    next_shoot: qs('#rv-shoot', slot).value.trim(),
+                    sentiment: state.reviewForm.sentiment,
+                    blockers: qs('#rv-blockers', slot).value.trim(),
+                    notes: qs('#rv-notes', slot).value.trim(),
+                }),
+            });
+            state.reviewForm = { sentiment: 'neutral' };
+            state.dashboardPanel = null;
+            showToast('Review submitted');
+            renderDashboard();
+        });
+    } else if (panel === 'update') {
+        slot.innerHTML = `
+            <div class="section-heading"><h2>File an <em>update.</em></h2><span>quick status note</span></div>
+            <div class="panel">
+                <div class="panel-grid" style="grid-template-columns:1fr 1fr">
+                    <div><label>Client</label><select id="up-client">${state.clients.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('')}</select></div>
+                    <div>
+                        <label>Status</label>
+                        <div class="chip-select" id="up-status">
+                            ${STATUS_OPTS.map(([v, l]) => `<div data-val="${v}" class="${state.updateForm.status === v ? 'sel-' + v : ''}">${l}</div>`).join('')}
+                        </div>
+                    </div>
+                </div>
+                <div style="margin-bottom:14px"><label>What changed today?</label><input id="up-note" placeholder="e.g. client approved the reel batch"></div>
+                <button class="btn btn-primary" id="up-submit" type="button">Post update</button>
+            </div>
+        `;
+        qsa('#up-status div', slot).forEach(chip => chip.addEventListener('click', () => {
+            state.updateForm.status = chip.dataset.val;
+            renderDashboardPanel();
+        }));
+        qs('#up-submit', slot).addEventListener('click', async () => {
+            await api('/api/updates', {
+                method: 'POST',
+                body: JSON.stringify({
+                    client_id: Number(qs('#up-client', slot).value),
+                    member_name: state.currentUser.name,
+                    status: state.updateForm.status,
+                    note: qs('#up-note', slot).value.trim(),
+                }),
+            });
+            state.updateForm = { status: 'on_track' };
+            state.dashboardPanel = null;
+            showToast('Update posted');
+            renderDashboard();
+        });
+    } else if (panel === 'suggest') {
+        slot.innerHTML = `
+            <div class="section-heading"><h2>This week's <em>focus.</em></h2><span>AI &middot; from reviews &amp; updates</span></div>
+            <div class="suggest-list">
+                ${d.suggestions.length ? d.suggestions.map(s => `
+                    <div class="suggest-row">
+                        <span class="suggest-priority" style="background:${s.pBg};color:${s.pColor}">${escapeHtml(s.priority)}</span>
+                        <div><strong style="font-size:13.5px">${escapeHtml(s.client)}</strong><div class="feed-note">${escapeHtml(s.action)}</div></div>
+                    </div>
+                `).join('') : '<div class="suggest-empty">No reviews filed in the last 7 days.</div>'}
+            </div>
+        `;
+    } else {
+        slot.innerHTML = '';
+    }
 }
 
 // ---- Clients ----

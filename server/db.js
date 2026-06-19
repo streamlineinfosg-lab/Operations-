@@ -74,6 +74,27 @@ db.exec(`
     type TEXT NOT NULL DEFAULT 'production',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS reviews (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_id INTEGER REFERENCES clients(id) ON DELETE CASCADE,
+    member_name TEXT NOT NULL,
+    leads INTEGER NOT NULL DEFAULT 0,
+    next_shoot TEXT,
+    sentiment TEXT NOT NULL DEFAULT 'neutral',
+    blockers TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS updates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_id INTEGER REFERENCES clients(id) ON DELETE CASCADE,
+    member_name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'on_track',
+    note TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `);
 
 function seedIfEmpty() {

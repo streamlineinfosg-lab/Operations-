@@ -316,7 +316,89 @@ app.delete('/api/calendar-events/:id', (req, res) => {
   res.status(204).end();
 });
 
+// ---- Reviews & Updates ----
+
+app.post('/api/reviews', (req, res) => {
+  const { client_id, member_name, leads, next_shoot, sentiment, blockers, notes } = req.body;
+  const result = db.prepare(`
+    INSERT INTO reviews (client_id, member_name, leads, next_shoot, sentiment, blockers, notes)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(client_id || null, member_name, Number(leads) || 0, next_shoot || null, sentiment || 'neutral', blockers || null, notes || null);
+  const review = db.prepare('SELECT * FROM reviews WHERE id = ?').get(result.lastInsertRowid);
+  res.status(201).json(review);
+});
+
+app.post('/api/updates', (req, res) => {
+  const { client_id, member_name, status, note } = req.body;
+  const result = db.prepare(`
+    INSERT INTO updates (client_id, member_name, status, note) VALUES (?, ?, ?, ?)
+  `).run(client_id || null, member_name, status || 'on_track', note || null);
+  const update = db.prepare('SELECT * FROM updates WHERE id = ?').get(result.lastInsertRowid);
+  res.status(201).json(update);
+});
+
 // ---- Dashboard ----
+
+function buildActivityFeed(limit) {
+  const reviews = db.prepare(`
+    SELECT r.*, c.name AS client_name FROM reviews r LEFT JOIN clients c ON c.id = r.client_id
+    ORDER BY r.created_at DESC LIMIT ?
+  `).all(limit);
+  const updates = db.prepare(`
+    SELECT u.*, c.name AS client_name FROM updates u LEFT JOIN clients c ON c.id = u.client_id
+    ORDER BY u.created_at DESC LIMIT ?
+  `).all(limit);
+
+  const sentimentTag = { good: ['Good', '#e3f0e6', '#1f7a44'], neutral: ['Neutral', '#f1ede5', '#7a746c'], risk: ['At risk', '#fbe2e2', '#7c0000'] };
+  const statusTag = { on_track: ['On track', '#e3f0e6', '#1f7a44'], delayed: ['Delayed', '#fdf1d8', '#a9700a'], blocked: ['Blocked', '#fbe2e2', '#7c0000'] };
+
+  const items = [
+    ...reviews.map(r => {
+      const [label, bg, color] = sentimentTag[r.sentiment] || sentimentTag.neutral;
+      return {
+        kind: 'review', client: r.client_name || 'General', member: r.member_name, time: r.created_at,
+        status: label, tagBg: bg, tagColor: color,
+        note: r.notes || (r.blockers ? `Blocker: ${r.blockers}` : 'Filed a review with no notes.'),
+      };
+    }),
+    ...updates.map(u => {
+      const [label, bg, color] = statusTag[u.status] || statusTag.on_track;
+      return {
+        kind: 'update', client: u.client_name || 'General', member: u.member_name, time: u.created_at,
+        status: label, tagBg: bg, tagColor: color,
+        note: u.note || 'Posted a status update.',
+      };
+    }),
+  ];
+  items.sort((a, b) => new Date(b.time) - new Date(a.time));
+  return items.slice(0, limit).map(it => ({
+    ...it,
+    initials: it.member.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase(),
+  }));
+}
+
+function buildSuggestions() {
+  const recentReviews = db.prepare(`
+    SELECT r.*, c.name AS client_name FROM reviews r LEFT JOIN clients c ON c.id = r.client_id
+    WHERE r.created_at >= datetime('now', '-7 days') ORDER BY r.created_at DESC
+  `).all();
+  const suggestions = [];
+  for (const r of recentReviews) {
+    if (!r.client_name) continue;
+    if (r.sentiment === 'risk' || r.blockers) {
+      suggestions.push({
+        client: r.client_name, priority: 'HIGH', pBg: '#fbe2e2', pColor: '#7c0000',
+        action: r.blockers ? `Resolve blocker: ${r.blockers}` : 'Client sentiment flagged as at risk — check in this week.',
+      });
+    } else if (r.leads === 0) {
+      suggestions.push({
+        client: r.client_name, priority: 'MEDIUM', pBg: '#fdf1d8', pColor: '#a9700a',
+        action: 'No leads reported this week — review content angle or posting cadence.',
+      });
+    }
+  }
+  return suggestions.slice(0, 6);
+}
 
 app.get('/api/dashboard', (req, res) => {
   const clients = db.prepare('SELECT * FROM clients').all();
@@ -328,12 +410,33 @@ app.get('/api/dashboard', (req, res) => {
     WHERE type = 'shoot' AND strftime('%Y-%m', event_date) = strftime('%Y-%m', 'now')
   `).get().count;
   const criticalClients = clients.filter(c => c.health_score <= 30).length;
+
+  const needsAttention = clients
+    .filter(c => c.health_score <= 60)
+    .sort((a, b) => a.health_score - b.health_score)
+    .slice(0, 4)
+    .map(c => {
+      const latestReview = db.prepare(`
+        SELECT * FROM reviews WHERE client_id = ? ORDER BY created_at DESC LIMIT 1
+      `).get(c.id);
+      return {
+        id: c.id, name: c.name, health: c.health_score,
+        statusColor: c.health_score <= 30 ? '#7c0000' : '#a9700a',
+        bar: c.health_score <= 30 ? '#7c0000' : '#a9700a',
+        pct: c.health_score,
+        reason: (latestReview && latestReview.blockers) || `Health score at ${c.health_score}/100`,
+      };
+    });
+
   res.json({
     activeClients,
     postsThisWeek: { actual: postsThisWeekActual, target: postsThisWeekTarget },
     postsThisMonth: { actual: postsThisWeekActual, target: postsThisWeekTarget },
     shootsThisMonth,
     criticalClients,
+    needsAttention,
+    feed: buildActivityFeed(8),
+    suggestions: buildSuggestions(),
   });
 });
 
