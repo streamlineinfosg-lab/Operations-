@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BlackGrid OS</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Lora:ital,wght@0,500;0,600;1,500;1,600&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="login-accent-bar"></div>
+
+    <!-- User ID screen -->
+    <div id="screen-userid" class="screen active">
+        <div class="login-col">
+            <div class="login-brand">
+                <img src="assets/blackgrid-mark.png" alt="BlackGrid Media" class="login-logo">
+                <div class="login-brand-text">
+                    <div class="login-brand-name">BlackGrid Media</div>
+                    <div class="login-brand-sub">Marketing Agency</div>
+                </div>
+            </div>
+            <p class="login-eyebrow">Internal Console</p>
+            <h1 class="login-heading">Welcome back</h1>
+            <p class="login-subtitle">Enter your User ID to continue. Authorized team members only.</p>
+            <form class="login-form" id="userid-form">
+                <div class="login-field">
+                    <label class="login-label" for="userid-input">User ID</label>
+                    <input type="text" id="userid-input" class="login-input" placeholder="Your Name"
+                        autocapitalize="none" autocorrect="off" spellcheck="false">
+                </div>
+                <button type="submit" class="login-btn-primary">Continue</button>
+                <p class="login-error" id="userid-error"></p>
+            </form>
+        </div>
+        <p class="login-footer">&copy; 2026 &middot; Restricted internal access</p>
+    </div>
+
+    <!-- PIN screen -->
+    <div id="screen-pin" class="screen">
+        <div class="login-col login-col-centered">
+            <button class="login-back" id="pin-back" type="button">&lt; Back</button>
+            <h2 class="login-pin-name" id="pin-name"></h2>
+            <p class="login-pin-role" id="pin-title"></p>
+            <div class="login-pin-dots" id="pin-dots">
+                <span></span><span></span><span></span><span></span>
+            </div>
+            <div class="login-keypad" id="pin-pad"></div>
+            <p class="login-error" id="pin-error"></p>
+        </div>
+    </div>
+
+    <!-- Main app -->
+    <div id="app-layout">
+        <nav id="nav-rail">
+            <div class="nav-brand serif">BlackGrid<span>.</span></div>
+            <div class="nav-items" id="nav-items"></div>
+            <div class="nav-footer">
+                <div class="nav-footer-avatar" id="nav-footer-avatar"></div>
+                <div class="nav-footer-info">
+                    <div class="nav-user" id="nav-user"></div>
+                    <button class="nav-link" id="change-pin-btn" type="button">Change PIN</button>
+                    <button class="nav-link" id="logout-btn" type="button">Switch user</button>
+                </div>
+            </div>
+        </nav>
+
+        <main id="main-content">
+            <section id="page-dashboard" class="page"></section>
+            <section id="page-clients" class="page"></section>
+            <section id="page-calendar" class="page"></section>
+            <section id="page-tasks" class="page"></section>
+            <section id="page-deliverables" class="page"></section>
+            <section id="page-library" class="page"></section>
+            <section id="page-studio" class="page"></section>
+            <section id="page-accounting" class="page"></section>
+            <section id="page-admin" class="page"></section>
+        </main>
+    </div>
+
+    <div id="modal-container"></div>
+    <div id="toast-container"></div>
+
+    <script src="js/app.js"></script>
+</body>
+</html>

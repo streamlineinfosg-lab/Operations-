@@ -1,0 +1,12 @@
+{
+  "name": "operations-app",
+  "version": "1.0.0",
+  "description": "Internal operations app: clients, tasks, calendar overview.",
+  "main": "server/server.js",
+  "scripts": {
+    "start": "node server/server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
